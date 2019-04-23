@@ -14,12 +14,11 @@ Code to process the data for a map allows users to explore NASA's [GISTEMP](http
 
 ```{r}
 # load required packages
-library(utils)
 library(raster)
 library(rgdal)
 library(dplyr)
 
-# load data 
+# load data as raster brick object
 temperature_monthly <- brick("data/gistemp1200_ERSSTv5.nc")
 
 ## create vector to serve as index for calculating annual totals
@@ -45,7 +44,7 @@ temperature_diff <- subset(temperature_annual, 125:139)
 temperature_diff <- calc(temperature_diff, mean, na.rm = TRUE) 
 
 # create a raster object with the same extent but higher resolution
-s <- raster(nrow=1800, ncol=3600, extent(c(-180, 180, -90, 90))) 
+s <- raster(nrow = 1800, ncol = 3600, extent(c(-180, 180, -90, 90))) 
 # resample the data using this raster
 temperature_diff <- resample(temperature_diff, s, method="bilinear") 
 
