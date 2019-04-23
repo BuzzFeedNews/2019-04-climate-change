@@ -151,7 +151,7 @@ global_sealevel <- global_sealevel %>%
   mutate(value = round(value - first(value),1))
 
 # write to CSV
-write_csv(global_sealevel, "global_sealevel.csv", na = "")
+write_csv(global_sealevel, "data/global_sealevel.csv", na = "")
 ```
 
 The GeoTIFF was then styled in QGIS and imported to Mapbox as a raster tileset; the CSV data was hard-coded into the HTML for the resulting interactive map and chart:
