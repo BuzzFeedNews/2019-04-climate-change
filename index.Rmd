@@ -1,0 +1,161 @@
+
+# Here And Now: These Maps Show How Climate Change Has Already Transformed The Earth
+
+```{r setup, include = FALSE}
+library(knitr)
+opts_chunk$set(out.width="900px", dpi=300, message =FALSE, warning = FALSE)
+```
+
+Data and [R](https://www.r-project.org/) code used to make the maps and animation in this [Apr. 22, 2019 BuzzFeed News post](https://www.buzzfeednews.com/article/peteraldhous/climate-change-maps-ice-sea-level-rise) on the current reality of climate change. Supporting files are in [this GitHub repository](https://github.com/BuzzFeedNews/2019-04-climate-change).
+
+### Map showing temperature trends across the globe
+
+Code to process the data for a map allows users to explore NASA's [GISTEMP](https://data.giss.nasa.gov/gistemp/) surface temperature analysis, which contains temperature records from 1880 onwards for a grid with cells of 2 degrees latitude by 2 degrees longitude.
+
+```{r}
+# load required packages
+library(utils)
+library(raster)
+library(rgdal)
+library(dplyr)
+
+# load data 
+temperature_monthly <- brick("data/gistemp1200_ERSSTv5.nc")
+
+## create vector to serve as index for calculating annual totals
+# we need an index with 12 repeats of an index number for each of the 140 years in the data
+num_years <- rep(1:140, each = 12) 
+
+# calculate annual totals, gives 140 layers one for each year 1880-2019 in the data
+temperature_annual <- stackApply(temperature_monthly, indices=num_years, fun=mean)
+
+## convert annual data to spatial polygons data frame, write to GeoJSON
+temperature_annual_df <- as(temperature_annual, "SpatialPolygonsDataFrame")
+names(temperature_annual_df@data) <- c(as.character(1880:2019))
+# filter for 1880-2018
+temperature_annual_df@data <- temperature_annual_df@data %>%
+  select(1:139)
+writeOGR(temperature_annual_df, "geojson/temperature_annual.geojson", layer="temperature", driver="GeoJSON")
+
+## make the map overlay
+
+# calculate change in temperature between the 1951-1980 reference period in the GISTEMP analysis
+# and the last 15 years 2004-2018
+temperature_diff <- subset(temperature_annual, 125:139)
+temperature_diff <- calc(temperature_diff, mean, na.rm = TRUE) 
+
+# create a raster object with the same extent but higher resolution
+s <- raster(nrow=1800, ncol=3600, extent(c(-180, 180, -90, 90))) 
+# resample the data using this raster
+temperature_diff <- resample(temperature_diff, s, method="bilinear") 
+
+# write to GeoTIFF
+writeRaster(temperature_diff, filename="geotiff/temperature_diff.tif", format = "GTiff", overwrite = TRUE)
+```
+
+The GeoTIFF was then styled in [QGIS](https://qgis.org/en/site/) and imported to [Mapbox](https://www.mapbox.com/) as a raster tileset. The GeoJSON was imported to Mapbox as a vector tileset.
+
+Here is the resulting interactive map and chart, made with [Mapbox GL](https://docs.mapbox.com/mapbox-gl-js/api/) and [Highcharts](https://www.highcharts.com/):
+
+<iframe src="https://data.buzzfeed.com/projects/2019-04-climate-maps/temperature.html" width = 100% height = 500 frameborder="0" marginheight="0" marginwidth="0"></iframe>
+
+### Animation showing trend in area of Arctic sea ice
+
+Code to create an animation of the National Snow and Ice Data Center's daily Arctic [Sea Ice Index](https://nsidc.org/data/seaice_index). To make the animated GIF, you will need to install [ImageMagick](https://www.imagemagick.org/script/index.php).
+
+```{r}
+# load additional required packages
+library(readr)
+library(ggplot2)
+library(lubridate)
+
+# load and process data
+sea_ice <- read_csv("ftp://sidads.colorado.edu/DATASETS/NOAA/G02135/north/daily/data/N_seaice_extent_daily_v3.0.csv") %>%
+  slice(-1) %>%
+  select(1:5) %>%
+  mutate(Date = ymd(paste0(Year,Month,Day)),
+         Date2 = ymd(paste0("2018",Month,Day)),
+         Year = as.integer(Year),
+         Extent = as.double(Extent)) %>%
+  filter(Date >= "1979-01-01")
+
+# Loop to make one frame for each year
+for (y in c(1980:2019)) {
+  tmp <- sea_ice %>%
+    filter(Year < y)
+  tmp2 <- sea_ice %>%
+    filter(Year == y)
+  plot <- ggplot(tmp, aes(x = Date2, y = Extent, group = Year)) +
+    geom_line(color = "#cccccc") +
+    theme_minimal(base_size = 18, base_family = "BasierSquare-SemiBold") +
+    labs(x= "", y = "Ice area (million square km)") +
+    scale_x_date(date_labels = "%b",
+                 date_breaks = "month",
+                 limits = c(as.Date("2018-01-01"), as.Date("2018-12-31"))) +
+    scale_y_continuous(limits=c(0,18)) +
+    theme(panel.grid.minor = element_blank(),
+          legend.position = c(0.2,0.2),
+          plot.title = element_text(size = 30, color = "#08519c")) +
+    geom_line(data = tmp2, color = "#08519c", size = 1) + 
+    ggtitle(y)
+  ggsave(paste0("png/",y,"_sea_ice.png"), width = 9, height = 5, units = "in",
+                dpi = 300)
+}
+
+# make GIF with ImageMagick (note, on Windows use shell function instead of system)
+system("convert png/*.png -set delay 20 gif/seaice.gif")
+
+# increase the delay on the final frame
+system("convert gif/seaice.gif \\( +clone -set delay 300 \\) +swap +delete  gif/seaice.gif")
+```
+
+<img src = "gif/seaice.gif">
+
+### Map showing variation in the rate of sea level rise
+
+Code to process the data for a map allows users to see variation in the rate of sea level change, visualized from [French Space Agency and NASA data](https://podaac.jpl.nasa.gov/dataset/AVISO_L4_DYN_TOPO_1DEG_1MO) on sea surface height for a grid with cells of 1 degree1 latitude by 1 degree longitude, and to include an inset chart showing data on the global annual sea level, [from the University of Colorado's Sea Level Research Group](http://sealevel.colorado.edu/).
+
+
+```{r}
+# load data
+sealevel_monthly <- brick("data/zos_AVISO_L4_199210-201012.nc")
+
+## make the map overlay
+
+## filter data for comparison periods, and calculate mean sea level for each 
+# 1993-1995
+sealevel_start <- subset(sealevel_monthly, 4:39)
+sealevel_start <- calc(sealevel_start, mean, na.rm = TRUE) 
+# 2008-2010
+sealevel_end <- subset(sealevel_monthly, 184:219) 
+sealevel_end <- calc(sealevel_end, mean, na.rm = TRUE) 
+
+## calculate change in sea level between comparison periods
+sealevel_diff <- sealevel_end - sealevel_start
+# center on Greenwich meridian
+sealevel_diff <- rotate(sealevel_diff)
+
+# create a raster object with the same extent but higher resolution
+s <- raster(nrow = 1800, ncol = 3600, extent(c(-180, 180, -90, 90))) 
+# resample the data using this raster
+sealevel_diff <- resample(sealevel_diff, s, method = "bilinear") 
+
+# write to GeoTiff
+writeRaster(sealevel_diff, filename = "geotiff/sealevel_diff.tif", format = "GTiff", overwrite = TRUE)
+
+## process data for inset chart
+
+## load and process global average sea level data 
+global_sealevel <- read_tsv("http://sealevel.colorado.edu/files/2018_rel1/sl_ns_global.txt")
+names(global_sealevel) <- c("date","value")
+global_sealevel <- global_sealevel %>%
+  mutate(value = round(value - first(value),1))
+
+# write to CSV
+write_csv(global_sealevel, "global_sealevel.csv", na = "")
+```
+
+The GeoTIFF was then styled in QGIS and imported to Mapbox as a raster tileset; the CSV data was hard-coded into the HTML for the resulting interactive map and chart:
+
+<iframe src="https://data.buzzfeed.com/projects/2019-04-climate-maps/sealevel.html" width = 100% height = 500 frameborder="0" marginheight="0" marginwidth="0"</iframe>
+
